@@ -9,6 +9,8 @@
 #include <thread>
 #include <random>
 #include <algorithm>
+#include "display/display.cpp"
+#include "rt/rt.cpp"
 
 int imageWidth = 480, imageHeight = 270, numSamples = 4, bounces = 3;
 int jumps = 8;
@@ -18,6 +20,7 @@ std::string imageFileName = "pixar";
 int colour_high = 1000;
 int colour_low = 10;
 
+std::vector<Vec> curves = {};
 std::vector<char> letters = {};
 /*
     "5O5_"
@@ -46,7 +49,7 @@ FILE *curvesFile = fopen("curves.txt", "r");
 #define HIT_SUN 3
 
 // RT logic
-
+/*
 struct Vec
 {
     float x, y, z;
@@ -74,8 +77,6 @@ struct Vec
         return *this * (1 / sqrtf(*this % *this));
     }
 };
-
-std::vector<Vec> curves = {};
 
 float min(float l, float r)
 {
@@ -209,8 +210,7 @@ Vec trace(Vec origin, Vec direction)
 
             // Blend colors based on normal direction
             Vec wallColor = color1 * xWeight + color2 * yWeight + color3 * zWeight;
-            /**/
-
+            
             // Vec wallColor = Vec(400, 400, 400);
 
             float incidence = normal % lightDirection;
@@ -245,7 +245,7 @@ Vec trace(Vec origin, Vec direction)
     }
     return color;
 }
-
+/**/
 void readLetters()
 {
     if (!lettersFile)
@@ -266,7 +266,7 @@ void readLetters()
     }
 
     // for (char c : letters)
-        // printf("%c", c);
+    // printf("%c", c);
     // printf("\n");
     fclose(lettersFile);
 }
@@ -284,108 +284,6 @@ void readCurves()
     }
     fclose(curvesFile);
 }
-
-// Lets try to display this in realtime
-
-class RGBDisplay
-{
-private:
-    HWND hwnd;
-    HDC hdc;
-    BITMAPINFO bmi;
-    int width, height;
-
-public:
-    bool windowOpen = true;
-    RGBDisplay(int w, int h) : width(w), height(h)
-    {
-        // Create window
-        WNDCLASSA wc = {};
-        wc.lpfnWndProc = WindowProc;
-        wc.hInstance = GetModuleHandle(nullptr);
-        wc.lpszClassName = "RGBDisplay";
-        RegisterClassA(&wc);
-
-        hwnd = CreateWindowA("RGBDisplay", "Not So Postcard Pathtracer", WS_OVERLAPPEDWINDOW,
-                             100, 100, width, height, nullptr, nullptr,
-                             GetModuleHandle(nullptr), this);
-
-        hdc = GetDC(hwnd);
-
-        // Setup bitmap info
-        ZeroMemory(&bmi, sizeof(bmi));
-        bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-        bmi.bmiHeader.biWidth = width;
-        bmi.bmiHeader.biHeight = -height; // negative for top-down
-        bmi.bmiHeader.biPlanes = 1;
-        bmi.bmiHeader.biBitCount = 24;
-        bmi.bmiHeader.biCompression = BI_RGB;
-
-        ShowWindow(hwnd, SW_SHOW);
-    }
-
-    void update(unsigned char *rgbData)
-    {
-        if (!windowOpen)
-            return;
-        StretchDIBits(hdc,
-                      0, 0, width, height,           // Draw to full window
-                      0, 0, imageWidth, imageHeight, // From full RGB data
-                      rgbData, &bmi, DIB_RGB_COLORS, SRCCOPY);
-    }
-
-    bool processMessages()
-    {
-        MSG msg;
-        while (PeekMessageA(&msg, nullptr, 0, 0, PM_REMOVE))
-        {
-            if (!windowOpen)
-                return true; // If window is closed, stop processing messages
-            if (msg.message == WM_QUIT)
-                return false;
-            if (msg.message == WM_CLOSE)
-                return false;
-            TranslateMessage(&msg);
-            DispatchMessageA(&msg);
-        }
-        return true;
-    }
-
-    static LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
-    {
-        RGBDisplay *display = (RGBDisplay *)GetWindowLongPtrA(hwnd, GWLP_USERDATA);
-
-        switch (uMsg)
-        {
-        case WM_SIZE:
-        {
-            if (display)
-            {
-                // Update window dimensions when resized
-                display->width = LOWORD(lParam);
-                display->height = HIWORD(lParam);
-
-                // Force a repaint
-                InvalidateRect(hwnd, nullptr, FALSE);
-            }
-            return 0;
-        }
-        case WM_PAINT:
-        {
-            PAINTSTRUCT ps;
-            BeginPaint(hwnd, &ps);
-            EndPaint(hwnd, &ps);
-            return 0;
-        }
-        case WM_DESTROY:
-            PostQuitMessage(0);
-            display->windowOpen = false;
-            return 0;
-        default:
-            return DefWindowProcA(hwnd, uMsg, wParam, lParam);
-        }
-    }
-};
 
 int main(int argc, char *argv[])
 {
@@ -436,12 +334,16 @@ int main(int argc, char *argv[])
     imageFileName = imageFileName + "_" + std::to_string(imageWidth) + "x" + std::to_string(imageHeight) + "_" + std::to_string(numSamples) + "_" + std::to_string(bounces) + "_" + std::to_string(state);
     imageFileName = imageFileName + ".ppm";
 
-    Vec cameraPos(-22, 5, 25);
+    /*
+    Vec cameraPos(-22, 10, 25);
     Vec cameraDir = !(Vec(-3, 4, 0) + cameraPos * -1);
     Vec cameraLeft = !Vec(cameraDir.z, 0, -cameraDir.x) * (1. / imageWidth);
     Vec cameraUp = Vec(cameraDir.y * cameraLeft.z - cameraDir.z * cameraLeft.y,
                        cameraDir.z * cameraLeft.x - cameraDir.x * cameraLeft.z,
                        cameraDir.x * cameraLeft.y - cameraDir.y * cameraLeft.x);
+    /**/
+
+    PathTracer pathTracer(letters, curves, imageWidth, imageHeight, numSamples, bounces, 1000, 10);
 
     RGBDisplay display(imageWidth, imageHeight);
 
@@ -463,13 +365,17 @@ int main(int argc, char *argv[])
     std::shuffle(order.begin(), order.end(), rng);
 
     int pix = 0, row = 0;
+
     printf("Rendering %s with %d samples and %d bounces...\n", imageFileName.c_str(), numSamples, bounces);
     printf("Image size: %dx%d\n", imageWidth, imageHeight);
     printf("Finished %d pixels out of %d (%f%%)\n", pix, imageWidth * imageHeight, (float)pix / (imageWidth * imageHeight) * 100);
     printf("Render time: %.2f seconds\n", 0.0);
+
     clock_t start = clock();
     clock_t end = clock();
+
     bool done = false;
+
     std::thread raytracingThread([&]()
                                  {
 #pragma omp parallel for // schedule(guided, jumps)
@@ -478,8 +384,12 @@ int main(int argc, char *argv[])
                 int pixelX = pixel % imageWidth;
                 int pixelY = pixel / imageWidth;
                 Vec pixelColor;
+                /*
                 for (int sampleIdx = numSamples; sampleIdx--;)
                     pixelColor = pixelColor + trace(cameraPos, !(cameraDir + cameraLeft * (pixelX - imageWidth / 2 + random()) + cameraUp * (pixelY - imageHeight / 2 + random())));
+                /**/
+
+                pixelColor = pathTracer.pathPixel(pixelX, pixelY);
 
                 if (!state)
                 {
@@ -505,6 +415,8 @@ int main(int argc, char *argv[])
         }
         done = true; });
 
+    bool ddone = false;
+
     std::thread estimateThread([&]()
                                {
         while (!done)
@@ -517,32 +429,36 @@ int main(int argc, char *argv[])
                 left = estimate - elapsed;
             int est = (int)left % 60, minest = (int)estimate % 60;
             printf("\033[2A\rFinished %d pixels out of %d (%f%%)\r\n", pix, imageWidth * imageHeight, completion * 100);
-            printf("Render time: %.2f seconds. Expected finish time: %.0f minutes %d seconds\r\n", elapsed, minutes, minest);
-            printf("Estimated time left: %.0f minutes and %d seconds.", (left) / 60, est);
+            printf("Render time: %.2f seconds. Expected finish time: %.0f minutes %d seconds   \r\n", elapsed, minutes, minest);
+            printf("Estimated time left: %.0f minutes and %d seconds.     ", (left) / 60, est);
             fflush(stdout);
-            Sleep(1000);
+            Sleep(300);
         }
         printf("\nRendering of %s complete.\n", imageFileName.c_str());
         fwrite(image.data(), 1, imageWidth * imageHeight * 3, outFile);
         end = clock();
         printf("Render time: %.2f seconds\n", (double)(end - start) / CLOCKS_PER_SEC);
         printf("Rendered %dx%d with %d samples and %d bounces per ray in %.2f seconds\n", imageWidth, imageHeight, numSamples, bounces, (double)(end - start) / CLOCKS_PER_SEC);
-        fclose(outFile); });
+        fclose(outFile);
+        ddone = true; });
 
-    while (display.processMessages())
+    for (int x = 0; true; x++)
     {
-        if (display.windowOpen)
+        x %= 10;
+        display.processMessages();
+        if (display.isWindowVisible() && x % 10 == 0)
         {
             display.update(image.data());
         }
-        Sleep(16);
-        if (done)
+        if (ddone)
         {
-            estimateThread.join();
-            raytracingThread.join();
+            if (estimateThread.joinable())
+                estimateThread.join();
+            if (raytracingThread.joinable())
+                raytracingThread.join();
             break;
         }
-        // GetAsyncKeyState('R') & 0x8000 ? display.windowOpen = true : 0;
+        Sleep(8);
     }
 }
 // Inspired by Andrew Kensler's postcard pathtracer

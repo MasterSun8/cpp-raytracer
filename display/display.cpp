@@ -1,70 +1,118 @@
-#include "display.h"
 #include <windows.h>
 
-LRESULT CALLBACK display::WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
+class RGBDisplay
 {
-    if (uMsg == WM_DESTROY)
-        PostQuitMessage(0);
-    return DefWindowProc(hwnd, uMsg, wParam, lParam);
-}
+private:
+    HWND hwnd;
+    HDC hdc;
+    BITMAPINFO bmi;
+    int width, height, imageWidth, imageHeight;
 
-display::display(int w, int h) : width(w), height(h)
-{
-    initWindow();
-}
-
-void display::initWindow()
-{
-    WNDCLASS wc = {};
-    wc.lpfnWndProc = WindowProc;
-    wc.hInstance = GetModuleHandle(nullptr);
-    wc.lpszClassName = "displayClass";
-    RegisterClass(&wc);
-
-    hwnd = CreateWindowA(wc.lpszClassName, "display", WS_OVERLAPPEDWINDOW,
-                         CW_USEDEFAULT, CW_USEDEFAULT, width, height,
-                         nullptr, nullptr, wc.hInstance, nullptr);
-
-    hdc = GetDC(hwnd);
-
-    ZeroMemory(&bmi, sizeof(bmi));
-    bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-    bmi.bmiHeader.biWidth = width;
-    bmi.bmiHeader.biHeight = -height; // top-down
-    bmi.bmiHeader.biPlanes = 1;
-    bmi.bmiHeader.biBitCount = 24;
-    bmi.bmiHeader.biCompression = BI_RGB;
-
-    ShowWindow(hwnd, SW_SHOW);
-}
-
-void display::update(const std::vector<unsigned char> &rgb)
-{
-    if (rgb.size() != width * height * 3)
-        return;
-    SetDIBitsToDevice(hdc,
-                      0,
-                      0,
-                      width,
-                      height,
-                      0,
-                      0,
-                      0,
-                      height,
-                      rgb.data(),
-                      &bmi,
-                      DIB_RGB_COLORS);
-}
-
-bool display::processMessages()
-{
-    MSG msg;
-    while (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE))
+public:
+    bool windowOpen = true;
+    RGBDisplay(int w, int h) : width(w), height(h), imageWidth(w), imageHeight(h)
     {
-        if (msg.message == WM_QUIT)
-            return false;
-        TranslateMessage(&msg);
-        DispatchMessage(&msg);
+        // Create window
+        WNDCLASSA wc = {};
+        wc.lpfnWndProc = WindowProc;
+        wc.hInstance = GetModuleHandle(nullptr);
+        wc.lpszClassName = "RGBDisplay";
+        RegisterClassA(&wc);
+
+        hwnd = CreateWindowA("RGBDisplay", "Not So Postcard Pathtracer", WS_OVERLAPPEDWINDOW,
+                             100, 100, width, height, nullptr, nullptr,
+                             GetModuleHandle(nullptr), this);
+
+        SetWindowLongPtrA(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(this));
+
+        hdc = GetDC(hwnd);
+
+        // Setup bitmap info
+        ZeroMemory(&bmi, sizeof(bmi));
+        bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+        bmi.bmiHeader.biWidth = width;
+        bmi.bmiHeader.biHeight = -height; // negative for top-down
+        bmi.bmiHeader.biPlanes = 1;
+        bmi.bmiHeader.biBitCount = 24;
+        bmi.bmiHeader.biCompression = BI_RGB;
+
+        ShowWindow(hwnd, SW_SHOW);
     }
-    return true;
-}
+
+    void update(unsigned char *rgbData)
+    {
+        // if (!windowOpen)
+        // return;
+        StretchDIBits(hdc,
+                      0, 0, width, height,           // Draw to full window
+                      0, 0, imageWidth, imageHeight, // From full RGB data
+                      rgbData, &bmi, DIB_RGB_COLORS, SRCCOPY);
+    }
+
+    bool processMessages()
+    {
+        MSG msg;
+        while (PeekMessageA(&msg, nullptr, 0, 0, PM_REMOVE))
+        {
+            if (msg.message == WM_QUIT)
+            {
+                windowOpen = false;
+                return false;
+            }
+            if (msg.message == WM_CLOSE)
+                return false;
+            TranslateMessage(&msg);
+            DispatchMessageA(&msg);
+        }
+        return true;
+    }
+
+    static LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
+    {
+        RGBDisplay *display = (RGBDisplay *)GetWindowLongPtrA(hwnd, GWLP_USERDATA);
+
+        switch (uMsg)
+        {
+        case WM_SIZE:
+        {
+            if (display)
+            {
+                // Update window dimensions when resized
+                display->width = LOWORD(lParam);
+                display->height = HIWORD(lParam);
+
+                // Force a repaint
+                InvalidateRect(hwnd, nullptr, FALSE);
+            }
+            return 0;
+        }
+        case WM_PAINT:
+        {
+            PAINTSTRUCT ps;
+            BeginPaint(hwnd, &ps);
+            EndPaint(hwnd, &ps);
+            return 0;
+        }
+        case WM_CLOSE:
+            if (display)
+            {
+                ShowWindow(hwnd, SW_HIDE);
+                display->windowOpen = false;
+            }
+            return 0;
+        case WM_DESTROY:
+            if (display)
+            {
+                display->windowOpen = false;
+            }
+            return 0;
+        default:
+            return DefWindowProcA(hwnd, uMsg, wParam, lParam);
+        }
+    }
+
+    bool isWindowVisible() const
+    {
+        return windowOpen;
+    }
+};
