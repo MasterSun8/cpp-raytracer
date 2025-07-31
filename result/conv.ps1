@@ -1,4 +1,3 @@
-cd ..
 Get-ChildItem -Filter *.ppm | ForEach-Object {
     echo "Converting $_ to PNG format..."
     $pngName = $_.BaseName + ".png"

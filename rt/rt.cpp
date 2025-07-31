@@ -37,14 +37,13 @@ struct Vec
 class PathTracer
 {
 private:
-    int colour_high = 1000;
-    int colour_low = 10;
+    int colour_high, colour_low;
 
     std::vector<char> letters = {};
     std::vector<Vec> curves = {};
     Vec lightDirection{!Vec{.6, .6, 1}};
 
-    int imageWidth = 480, imageHeight = 270, numSamples = 4, bounces = 3;
+    int imageWidth, imageHeight, numSamples, bounces;
 
 public:
     struct Camera
@@ -52,19 +51,41 @@ public:
         Vec position, direction, left, up;
         int imageWidth;
         Camera() {};
-        Camera(Vec pos, Vec dir, int width) : position(pos), direction(dir), imageWidth(width)
+        Camera(Vec pos, Vec dir, int width) : position(pos), direction(dir), imageWidth(width) {};
+
+        void calculateCam()
         {
-            direction = !(dir + position * -1);
-            left = !Vec(direction.z, 0, -direction.x) * (1. / imageWidth);
+            direction = !(direction + position * -1);
+            left = !Vec(direction.z, 0, -direction.x) * (2. / imageWidth);
             up = Vec(direction.y * left.z - direction.z * left.y,
                      direction.z * left.x - direction.x * left.z,
                      direction.x * left.y - direction.y * left.x);
-        };
+        }
+
+        void setPosition(Vec p)
+        {
+            position = p;
+            calculateCam();
+        }
+
+        void setDirection(Vec d)
+        {
+            direction = d;
+            calculateCam();
+        }
     };
+
+    void setLightDirection(Vec ld){
+        lightDirection = !ld;
+    }
+
+    Vec getLightDirection(){
+        return lightDirection;
+    }
 
     Camera cam;
 
-    PathTracer(std::vector<char> l, std::vector<Vec> c, int width, int height, int samples, int bounces, int high, int low) : imageWidth(width), imageHeight(height), numSamples(samples), bounces(bounces), colour_high(high), colour_low(low)
+    PathTracer(std::vector<char> l, std::vector<Vec> c, int width = 480, int height = 270, int samples = 8, int bounces = 3, int high = 1000, int low = 10) : imageWidth(width), imageHeight(height), numSamples(samples), bounces(bounces), colour_high(high), colour_low(low)
     {
         letters = l;
         curves = c;

@@ -13,15 +13,11 @@
 #include "rt/rt.cpp"
 
 int imageWidth = 480, imageHeight = 270, numSamples = 4, bounces = 3;
-int jumps = 8;
-bool state = false;
 std::string imageFileName = "pixar";
 
 int colour_high = 1000;
 int colour_low = 10;
 
-std::vector<Vec> curves = {};
-std::vector<char> letters = {};
 /*
     "5O5_"
     "5W9W"
@@ -40,15 +36,12 @@ std::vector<char> letters = {};
     "cWiO"; // R (without curve)
 /**/
 
-FILE *lettersFile = fopen("letters.txt", "r");
-FILE *curvesFile = fopen("curves.txt", "r");
-
 #define HIT_NONE 0
 #define HIT_LETTER 1
 #define HIT_WALL 2
 #define HIT_SUN 3
 
-void readLetters()
+void readLetters(std::vector<char> &letters, FILE *lettersFile)
 {
     if (!lettersFile)
         return;
@@ -66,83 +59,87 @@ void readLetters()
             }
         }
     }
-
-    // for (char c : letters)
-    // printf("%c", c);
-    // printf("\n");
-    fclose(lettersFile);
 }
 
-void readCurves()
+void readVectors(std::vector<Vec> &values, FILE *file)
 {
-    if (!curvesFile)
+    if (!file)
         return;
     char buffer[256];
-    while (fgets(buffer, sizeof(buffer), curvesFile))
+    while (fgets(buffer, sizeof(buffer), file))
     {
-        int x, y, z;
-        sscanf(buffer, "%d, %d, %d", &x, &y, &z);
-        curves.push_back(Vec(x, y, z));
+        float x, y, z;
+        sscanf(buffer, "%f, %f, %f", &x, &y, &z);
+        values.push_back(Vec(x, y, z));
     }
-    fclose(curvesFile);
+}
+
+void readDetails(std::vector<int> &details, FILE *file)
+{
+    if (!file)
+        return;
+    char buffer[256];
+    while (fgets(buffer, sizeof(buffer), file))
+    {
+        int value;
+        sscanf(buffer, "%d", &value);
+        details.push_back(value);
+    }
 }
 
 int main(int argc, char *argv[])
 {
-    readLetters();
-    readCurves();
-    if (argc > 6)
+    std::vector<Vec> curves = {};
+    std::vector<Vec> camera = {};
+    std::vector<char> letters = {};
+    std::vector<int> details = {};
+
+    FILE *lettersFile = fopen("letters.txt", "r");
+    FILE *curvesFile = fopen("curves.txt", "r");
+    FILE *cameraFile = fopen("camera.txt", "r");
+    FILE *detailsFile = fopen("details.txt", "r");
+
+    readLetters(letters, lettersFile);
+    readVectors(curves, curvesFile);
+    readVectors(camera, cameraFile);
+    readDetails(details, detailsFile);
+
+    fclose(cameraFile);
+    fclose(curvesFile);
+    fclose(lettersFile);
+    fclose(detailsFile);
+
+    imageWidth = details[0];
+    imageHeight = details[1];
+    numSamples = details[2];
+    bounces = details[3];
+
+    if (argc > 1)
     {
-        imageWidth = atoi(argv[1]);
-        imageHeight = atoi(argv[2]);
-        numSamples = atoi(argv[3]);
-        bounces = atoi(argv[4]);
-        imageFileName = argv[5];
-        jumps = atoi(argv[6]);
-        state = false;
-    }
-    else if (argc > 5)
-    {
-        imageWidth = atoi(argv[1]);
-        imageHeight = atoi(argv[2]);
-        numSamples = atoi(argv[3]);
-        bounces = atoi(argv[4]);
-        imageFileName = argv[5];
-    }
-    else if (argc > 4)
-    {
-        imageWidth = atoi(argv[1]);
-        imageHeight = atoi(argv[2]);
-        numSamples = atoi(argv[3]);
-        bounces = atoi(argv[4]);
-    }
-    else if (argc > 3)
-    {
-        imageWidth = atoi(argv[1]);
-        imageHeight = atoi(argv[2]);
-        numSamples = atoi(argv[3]);
-    }
-    else if (argc > 2)
-    {
-        imageWidth = atoi(argv[1]);
-        imageHeight = atoi(argv[2]);
-    }
-    else if (argc > 1)
-    {
-        imageWidth = atoi(argv[1]);
-        imageHeight = imageWidth * 9 / 16;
+        imageFileName = argv[1];
     }
 
-    imageFileName = imageFileName + "_" + std::to_string(imageWidth) + "x" + std::to_string(imageHeight) + "_" + std::to_string(numSamples) + "_" + std::to_string(bounces) + "_" + std::to_string(state);
+    imageFileName = "result/" + imageFileName + "_" + std::to_string(imageWidth) + "x" + std::to_string(imageHeight) + "_" + std::to_string(numSamples) + "_" + std::to_string(bounces);
     imageFileName = imageFileName + ".ppm";
 
     PathTracer pathTracer(letters, curves, imageWidth, imageHeight, numSamples, bounces, 1000, 10);
+
+    pathTracer.setLightDirection(camera[0]);
+    pathTracer.cam.setPosition(camera[1]);
+    pathTracer.cam.setDirection(camera[2]);
+
+    printf("Light direction: (%f, %f, %f)\n", camera[0].x, camera[0].y, camera[0].z);
+    printf("Camera position: (%f, %f, %f)\n", camera[1].x, camera[1].y, camera[1].z);
+    printf("Camera direction: (%f, %f, %f)\n", camera[2].x, camera[2].y, camera[2].z);
 
     RGBDisplay display(imageWidth, imageHeight);
 
     FILE *outFile = fopen(imageFileName.c_str(), "wb");
     if (!outFile)
+    {
+        printf("Error opening output file %s\n", imageFileName.c_str());
         return 1;
+    }
 
     fprintf(outFile, "P6 %d %d 255 ", imageWidth, imageHeight);
     std::vector<unsigned char> image(imageWidth * imageHeight * 3, 0);
@@ -180,20 +177,10 @@ int main(int argc, char *argv[])
 
                 pixelColor = pathTracer.pathPixel(pixelX, pixelY);
 
-                if (!state)
-                {
-                    pixelColor = pixelColor * (1.0f / numSamples) + 14.0f / 241.0f;
-                    Vec o = pixelColor + 1.0f;
-                    pixelColor = Vec(pixelColor.x / o.x, pixelColor.y / o.y, pixelColor.z / o.z) * 255.0f;
-                }
-                else
-                {
-                    pixelColor = pixelColor * (1.0f / numSamples);
-                    pixelColor.x = std::max(0.0f, std::min(255.0f, pixelColor.x * 255.0f));
-                    pixelColor.y = std::max(0.0f, std::min(255.0f, pixelColor.y * 255.0f));
-                    pixelColor.z = std::max(0.0f, std::min(255.0f, pixelColor.z * 255.0f));
-                }
-
+                pixelColor = pixelColor * (1.0f / numSamples) + 14.0f / 241.0f;
+                Vec o = pixelColor + 1.0f;
+                pixelColor = Vec(pixelColor.x / o.x, pixelColor.y / o.y, pixelColor.z / o.z) * 255.0f;
+                
                 int flippedY = imageHeight - 1 - pixelY;
                 int flippedX = imageWidth - 1 - pixelX;
                 int id = 3 * (flippedY * imageWidth + flippedX);
@@ -208,6 +195,7 @@ int main(int argc, char *argv[])
 
     std::thread estimateThread([&]()
                                {
+Sleep(1000);
         while (!done)
         {
             end = clock();
