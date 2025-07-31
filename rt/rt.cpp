@@ -47,17 +47,28 @@ private:
     int imageWidth = 480, imageHeight = 270, numSamples = 4, bounces = 3;
 
 public:
-    Vec cameraPos{-22, 10, 25};
-    Vec cameraDir = !(Vec(-3, 4, 0) + cameraPos * -1);
-    Vec cameraLeft = !Vec(cameraDir.z, 0, -cameraDir.x) * (1. / imageWidth);
-    Vec cameraUp = Vec(cameraDir.y * cameraLeft.z - cameraDir.z * cameraLeft.y,
-                       cameraDir.z *cameraLeft.x - cameraDir.x * cameraLeft.z,
-                       cameraDir.x *cameraLeft.y - cameraDir.y * cameraLeft.x);
+    struct Camera
+    {
+        Vec position, direction, left, up;
+        int imageWidth;
+        Camera() {};
+        Camera(Vec pos, Vec dir, int width) : position(pos), direction(dir), imageWidth(width)
+        {
+            direction = !(dir + position * -1);
+            left = !Vec(direction.z, 0, -direction.x) * (1. / imageWidth);
+            up = Vec(direction.y * left.z - direction.z * left.y,
+                     direction.z * left.x - direction.x * left.z,
+                     direction.x * left.y - direction.y * left.x);
+        };
+    };
+
+    Camera cam;
 
     PathTracer(std::vector<char> l, std::vector<Vec> c, int width, int height, int samples, int bounces, int high, int low) : imageWidth(width), imageHeight(height), numSamples(samples), bounces(bounces), colour_high(high), colour_low(low)
     {
         letters = l;
         curves = c;
+        cam = Camera(Vec{-22, 10, 25}, Vec{-3, 4, 0}, width);
     }
 
     float min(float l, float r)
@@ -231,7 +242,7 @@ public:
     {
         Vec pixelColor;
         for (int sampleIdx = numSamples; sampleIdx--;)
-            pixelColor = pixelColor + trace(cameraPos, !(cameraDir + cameraLeft * (pixelX - imageWidth / 2 + random()) + cameraUp * (pixelY - imageHeight / 2 + random())));
+            pixelColor = pixelColor + trace(cam.position, !(cam.direction + cam.left * (pixelX - imageWidth / 2 + random()) + cam.up * (pixelY - imageHeight / 2 + random())));
         return pixelColor;
     }
 };
