@@ -5,18 +5,143 @@
 #include <vector>
 #include <time.h>
 #include <string>
+#include <windows.h>
+#include <thread>
+#include <random>
+#include <algorithm>
 
 int imageWidth = 480, imageHeight = 270, numSamples = 4, bounces = 3;
+int jumps = 8;
 bool state = true;
 std::string imageFileName = "pixar";
 
 int colour_high = 1000;
 int colour_low = 10;
 
+char letters[15 * 4 + 1] = // 15 two points lines
+    "5O5_"
+    "5W9W"
+    "5_9_" // P (without curve)
+    "AOEO"
+    "COC_"
+    "A_E_" // I
+    "IOQ_"
+    "I_QO" // X
+    "UOY_"
+    "Y_]O"
+    "WW[W" // A
+    "aOa_"
+    "aWeW"
+    "a_e_"
+    "cWiO"; // R (without curve)
+
 #define HIT_NONE 0
 #define HIT_LETTER 1
 #define HIT_WALL 2
 #define HIT_SUN 3
+
+// Lets try to display this in realtime
+
+class RGBDisplay
+{
+private:
+    HWND hwnd;
+    HDC hdc;
+    BITMAPINFO bmi;
+    int width, height;
+
+public:
+    bool windowOpen = true;
+    RGBDisplay(int w, int h) : width(w), height(h)
+    {
+        // Create window
+        WNDCLASSA wc = {};
+        wc.lpfnWndProc = WindowProc;
+        wc.hInstance = GetModuleHandle(nullptr);
+        wc.lpszClassName = "RGBDisplay";
+        RegisterClassA(&wc);
+
+        hwnd = CreateWindowA("RGBDisplay", "RGB Array", WS_OVERLAPPEDWINDOW,
+                             100, 100, width, height, nullptr, nullptr,
+                             GetModuleHandle(nullptr), this);
+
+        hdc = GetDC(hwnd);
+
+        // Setup bitmap info
+        ZeroMemory(&bmi, sizeof(bmi));
+        bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+        bmi.bmiHeader.biWidth = width;
+        bmi.bmiHeader.biHeight = -height; // negative for top-down
+        bmi.bmiHeader.biPlanes = 1;
+        bmi.bmiHeader.biBitCount = 24;
+        bmi.bmiHeader.biCompression = BI_RGB;
+
+        ShowWindow(hwnd, SW_SHOW);
+    }
+
+    void update(unsigned char *rgbData)
+    {
+        if (!windowOpen)
+            return;
+        StretchDIBits(hdc,
+                      0, 0, width, height,           // Draw to full window
+                      0, 0, imageWidth, imageHeight, // From full RGB data
+                      rgbData, &bmi, DIB_RGB_COLORS, SRCCOPY);
+    }
+
+    bool processMessages()
+    {
+        MSG msg;
+        while (PeekMessageA(&msg, nullptr, 0, 0, PM_REMOVE))
+        {
+            if (!windowOpen)
+                return true; // If window is closed, stop processing messages
+            if (msg.message == WM_QUIT)
+                return false;
+            if (msg.message == WM_CLOSE)
+                return false;
+            TranslateMessage(&msg);
+            DispatchMessageA(&msg);
+        }
+        return true;
+    }
+
+    static LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
+    {
+        RGBDisplay *display = (RGBDisplay *)GetWindowLongPtrA(hwnd, GWLP_USERDATA);
+
+        switch (uMsg)
+        {
+        case WM_SIZE:
+        {
+            if (display)
+            {
+                // Update window dimensions when resized
+                display->width = LOWORD(lParam);
+                display->height = HIWORD(lParam);
+
+                // Force a repaint
+                InvalidateRect(hwnd, nullptr, FALSE);
+            }
+            return 0;
+        }
+        case WM_PAINT:
+        {
+            PAINTSTRUCT ps;
+            BeginPaint(hwnd, &ps);
+            EndPaint(hwnd, &ps);
+            return 0;
+        }
+        case WM_DESTROY:
+            display->windowOpen = false;
+            return 0;
+        default:
+            return DefWindowProcA(hwnd, uMsg, wParam, lParam);
+        }
+    }
+};
+
+// RT logic
 
 struct Vec
 {
@@ -45,14 +170,17 @@ struct Vec
         return *this * (1 / sqrtf(*this % *this));
     }
 };
+
 float min(float l, float r)
 {
     return l < r ? l : r;
 }
+
 float random()
 {
     return (float)rand() / RAND_MAX;
 }
+
 float box(Vec position, Vec left, Vec right)
 {
     left = position + left * -1;
@@ -63,27 +191,13 @@ float box(Vec position, Vec left, Vec right)
             min(left.y, right.y)),
         min(left.z, right.z));
 }
+
 float SDF(Vec position, int &materialType)
 {
     float distance = 1e9;
     Vec flatPos = position;
     flatPos.z = 0;
-    char letters[15 * 4 + 1] = // 15 two points lines
-        "5O5_"
-        "5W9W"
-        "5_9_" // P (without curve)
-        "AOEO"
-        "COC_"
-        "A_E_" // I
-        "IOQ_"
-        "I_QO" // X
-        "UOY_"
-        "Y_]O"
-        "WW[W" // A
-        "aOa_"
-        "aWeW"
-        "a_e_"
-        "cWiO"; // R (without curve)
+
     for (int curveIdx = 0; curveIdx < 60; curveIdx += 4)
     {
         Vec curveStart = Vec(letters[curveIdx] - 79, letters[curveIdx + 1] - 79) * .5;
@@ -91,8 +205,10 @@ float SDF(Vec position, int &materialType)
         Vec offset = flatPos + (curveStart + curveDir * min(-min((curveStart + flatPos * -1) % curveDir / (curveDir % curveDir), 0), 1)) * -1;
         distance = min(distance, offset % offset);
     }
+
     distance = sqrtf(distance);
     Vec curves[] = {Vec(-11, 6), Vec(11, 6)};
+
     for (int curveIdx = 2; curveIdx--;)
     {
         Vec offset = flatPos + curves[curveIdx] * -1;
@@ -101,6 +217,7 @@ float SDF(Vec position, int &materialType)
                            ? fabsf(sqrtf(offset % offset) - 2)
                            : (offset.y += offset.y > 0 ? -2 : 2, sqrtf(offset % offset)));
     }
+
     distance = powf(powf(distance, 8) + powf(position.z, 8), .125) - .5;
     materialType = 1;
     float room = min(
@@ -116,8 +233,7 @@ float SDF(Vec position, int &materialType)
         box(
             Vec(
                 fmodf(
-                    fabsf(
-                        position.x),
+                    fabsf(position.x),
                     8),
                 position.y,
                 position.z),
@@ -126,7 +242,9 @@ float SDF(Vec position, int &materialType)
 
     if (room < distance)
         distance = room, materialType = 2;
+
     float ceiling = 19.9 - position.y;
+
     if (ceiling < distance)
         distance = ceiling, materialType = 3;
     return distance;
@@ -232,6 +350,7 @@ int main(int argc, char *argv[])
         numSamples = atoi(argv[3]);
         bounces = atoi(argv[4]);
         imageFileName = argv[5];
+        jumps = atoi(argv[6]);
         state = false;
     }
     else if (argc > 5)
@@ -276,7 +395,8 @@ int main(int argc, char *argv[])
                        cameraDir.z * cameraLeft.x - cameraDir.x * cameraLeft.z,
                        cameraDir.x * cameraLeft.y - cameraDir.y * cameraLeft.x);
 
-    
+    RGBDisplay display(imageWidth, imageHeight);
+
     FILE *outFile = fopen(imageFileName.c_str(), "wb");
     if (!outFile)
         return 1;
@@ -284,67 +404,104 @@ int main(int argc, char *argv[])
     fprintf(outFile, "P6 %d %d 255 ", imageWidth, imageHeight);
     std::vector<unsigned char> image(imageWidth * imageHeight * 3, 0);
 
-    int pixel = 0, row = 0;
+    std::vector<unsigned int> order(imageWidth * imageHeight, 0);
+    unsigned int counter = 0;
+    for (unsigned int &x : order)
+    {
+        x = counter++;
+    }
+
+    auto rng = std::default_random_engine();
+    std::shuffle(order.begin(), order.end(), rng);
+
+    int pix = 0, row = 0;
     printf("Rendering %s with %d samples and %d bounces...\n", imageFileName.c_str(), numSamples, bounces);
     printf("Image size: %dx%d\n", imageWidth, imageHeight);
-    printf("Finished %d rows out of %d (%f%%)\n", row, imageHeight, (float)row / (imageHeight) * 100);
-    printf("Rendered %d pixels out of %d (%f%%)\n", pixel, imageWidth * imageHeight, (float)pixel / (imageWidth * imageHeight) * 100);
+    // printf("Finished %d rows out of %d (%f%%)\n", row, imageHeight, (float)row / (imageHeight) * 100);
+    printf("Finished %d pixels out of %d (%f%%)\n", pix, imageWidth * imageHeight, (float)pix / (imageWidth * imageHeight) * 100);
     printf("Render time: %.2f seconds\n", 0.0);
     clock_t start = clock();
     clock_t end = clock();
-#pragma omp parallel for
-    for (int pixelY = imageHeight - 1; pixelY >= 0; pixelY--)
-    {
-        for (int pixelX = imageWidth; pixelX--;)
+
+    std::thread raytracingThread([&]()
+                                 {
+#pragma omp parallel for schedule(guided, imageHeight + imageWidth)
+        for (unsigned int pixel : order)
         {
-            Vec pixelColor;
-            for (int sampleIdx = numSamples; sampleIdx--;)
-                pixelColor = pixelColor + trace(cameraPos, !(cameraDir + cameraLeft * (pixelX - imageWidth / 2 + random()) + cameraUp * (pixelY - imageHeight / 2 + random())));
+            // for (int pixelX = imageWidth; pixelX--;)
+            // {
+                int pixelX = pixel % imageWidth;
+                int pixelY = pixel / imageWidth;
+                Vec pixelColor;
+                for (int sampleIdx = numSamples; sampleIdx--;)
+                    pixelColor = pixelColor + trace(cameraPos, !(cameraDir + cameraLeft * (pixelX - imageWidth / 2 + random()) + cameraUp * (pixelY - imageHeight / 2 + random())));
 
-            if (!state)
-            {
-                pixelColor = pixelColor * (1.0f / numSamples) + 14.0f / 241.0f;
-                Vec o = pixelColor + 1.0f;
-                pixelColor = Vec(pixelColor.x / o.x, pixelColor.y / o.y, pixelColor.z / o.z) * 255.0f;
-            }
-            else
-            {
-                pixelColor = pixelColor * (1.0f / numSamples);
-                pixelColor.x = std::max(0.0f, std::min(255.0f, pixelColor.x * 255.0f));
-                pixelColor.y = std::max(0.0f, std::min(255.0f, pixelColor.y * 255.0f));
-                pixelColor.z = std::max(0.0f, std::min(255.0f, pixelColor.z * 255.0f));
-            }
+                if (!state)
+                {
+                    pixelColor = pixelColor * (1.0f / numSamples) + 14.0f / 241.0f;
+                    Vec o = pixelColor + 1.0f;
+                    pixelColor = Vec(pixelColor.x / o.x, pixelColor.y / o.y, pixelColor.z / o.z) * 255.0f;
+                }
+                else
+                {
+                    pixelColor = pixelColor * (1.0f / numSamples);
+                    pixelColor.x = std::max(0.0f, std::min(255.0f, pixelColor.x * 255.0f));
+                    pixelColor.y = std::max(0.0f, std::min(255.0f, pixelColor.y * 255.0f));
+                    pixelColor.z = std::max(0.0f, std::min(255.0f, pixelColor.z * 255.0f));
+                }
 
-            int flippedY = imageHeight - 1 - pixelY;
-            int flippedX = imageWidth - 1 - pixelX;
-            int id = 3 * (flippedY * imageWidth + flippedX);
-            image[id + 0] = (unsigned char)pixelColor.x;
-            image[id + 1] = (unsigned char)pixelColor.y;
-            image[id + 2] = (unsigned char)pixelColor.z;
-            pixel++;
-        }
-        row++;
-        end = clock();
+                int flippedY = imageHeight - 1 - pixelY;
+                int flippedX = imageWidth - 1 - pixelX;
+                int id = 3 * (flippedY * imageWidth + flippedX);
+                image[id + 0] = (unsigned char)pixelColor.x;
+                image[id + 1] = (unsigned char)pixelColor.y;
+                image[id + 2] = (unsigned char)pixelColor.z;
+                pix++;
+            // }
+            // row++;
+/*
 #pragma omp critical
+            {
+
+            }
+/**/
+        } });
+
+    std::thread estimateThread([&]()
+                               {
+        while (raytracingThread.joinable())
         {
-            float completion = (float)pixel / (imageWidth * imageHeight),
-            elapsed = (double)(end - start) / CLOCKS_PER_SEC,
-            estimate = elapsed / completion,
-            minutes = estimate / 60,
-            left = estimate - elapsed;
+            end = clock();
+            float completion = (float)pix / (imageWidth * imageHeight),
+                elapsed = (double)(end - start) / CLOCKS_PER_SEC,
+                estimate = elapsed / completion,
+                minutes = estimate / 60,
+                left = estimate - elapsed;
             int est = (int)left % 60, minest = (int)estimate % 60;
-            printf("\033[3A\rFinished %d rows out of %d (%f%%)\r\n", row, imageHeight, (float)row / (imageHeight) * 100);
-            printf("Rendered %d pixels out of %d (%f%%)\r\n", pixel, imageWidth * imageHeight, completion * 100);
+            printf("\033[2A\rFinished %d pixels out of %d (%f%%)\r\n", pix, imageWidth * imageHeight, completion * 100);
+            // printf("Rendered %d pixels out of %d (%f%%)\r\n", pixel, imageWidth * imageHeight, completion * 100);
             printf("Render time: %.2f seconds. Expected finish time: %.0f minutes %d seconds\r\n", elapsed, minutes, minest);
             printf("Estimated time left: %.0f minutes and %d seconds.", (left) / 60, est);
             fflush(stdout);
+            Sleep(32);
         }
-    }
+        printf("\nRendering of %s complete.\n", imageFileName.c_str());
+        fwrite(image.data(), 1, imageWidth * imageHeight * 3, outFile);
+        end = clock();
+        printf("Render time: %.2f seconds\n", (double)(end - start) / CLOCKS_PER_SEC);
+        printf("Rendered %dx%d with %d samples and %d bounces per ray in %.2f seconds\n", imageWidth, imageHeight, numSamples, bounces, (double)(end - start) / CLOCKS_PER_SEC);
+        fclose(outFile);
+    });
 
-    printf("\nRendering of %s complete.\n", imageFileName.c_str());
-    fwrite(image.data(), 1, imageWidth * imageHeight * 3, outFile);
-    end = clock();
-    printf("Render time: %.2f seconds\n", (double)(end - start) / CLOCKS_PER_SEC);
-    printf("Rendered %dx%d with %d samples and %d bounces per ray in %.2f seconds\n", imageWidth, imageHeight, numSamples, bounces, (double)(end - start) / CLOCKS_PER_SEC);
-    fclose(outFile);
+    while (display.processMessages())
+    {
+        if (display.windowOpen)
+        {
+            display.update(image.data());
+        }
+        Sleep(16); // Sleep to reduce CPU usage
+        if (!raytracingThread.joinable())
+            break; // Exit if threads are done
+        GetAsyncKeyState('R') & 0x8000 ? display.windowOpen = true : 0;
+    }
 } // Andrew Kensler
