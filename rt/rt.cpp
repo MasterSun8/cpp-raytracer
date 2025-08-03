@@ -41,7 +41,14 @@ private:
 
     std::vector<char> letters = {};
     std::vector<Vec> curves = {};
+
     Vec lightDirection{!Vec{.6, .6, 1}};
+    Vec roomMin,
+        roomMax,
+        ceilingMin,
+        ceilingMax,
+        columnMin,
+        columnMax;
 
     int imageWidth, imageHeight, numSamples, bounces;
 
@@ -57,9 +64,11 @@ public:
         {
             direction = !(direction + position * -1);
             left = !Vec(direction.z, 0, -direction.x) * (2. / imageWidth);
-            up = Vec(direction.y * left.z - direction.z * left.y,
-                     direction.z * left.x - direction.x * left.z,
-                     direction.x * left.y - direction.y * left.x);
+            float x = direction.y * left.z - direction.z * left.y,
+                  y = direction.z * left.x - direction.x * left.z,
+                  z = direction.x * left.y - direction.y * left.x;
+
+            up = Vec(x, y, z);
         }
 
         void setPosition(Vec p)
@@ -75,11 +84,13 @@ public:
         }
     };
 
-    void setLightDirection(Vec ld){
+    void setLightDirection(Vec ld)
+    {
         lightDirection = !ld;
     }
 
-    Vec getLightDirection(){
+    Vec getLightDirection()
+    {
         return lightDirection;
     }
 
@@ -90,6 +101,12 @@ public:
         letters = l;
         curves = c;
         cam = Camera(Vec{-22, 10, 25}, Vec{-3, 4, 0}, width);
+        Vec roomMin(-30, -.5, -30);
+        Vec roomMax(30, 18, 30);
+        Vec ceilingMin(-25, 17, -25);
+        Vec ceilingMax(25, 20, 25);
+        Vec columnMin(1.5, 18.5, -25);
+        Vec columnMax(6.5, 20, 25);
     }
 
     float min(float l, float r)
@@ -123,7 +140,11 @@ public:
         {
             Vec curveStart = Vec(letters[id] - 79, letters[id + 1] - 79) * .5;
             Vec curveDir = Vec(letters[id + 2] - 79, letters[id + 3] - 79) * .5 + curveStart * -1;
-            Vec offset = flatPos + (curveStart + curveDir * min(-min((curveStart + flatPos * -1) % curveDir / (curveDir % curveDir), 0), 1)) * -1;
+            Vec toFlat = curveStart + flatPos * -1;
+            float t = toFlat % curveDir / (curveDir % curveDir);
+            t = min(-min(t, 0), 1);
+            Vec closestPoint = curveStart + curveDir * t;
+            Vec offset = flatPos + closestPoint * -1;
             distance = min(distance, offset % offset);
         }
 
@@ -140,25 +161,15 @@ public:
 
         distance = powf(powf(distance, 8) + powf(position.z, 8), .125) - .5;
         materialType = 1;
-        float room = min(
-            -min(
-                box(
-                    position,
-                    Vec(-30, -.5, -30),
-                    Vec(30, 18, 30)),
-                box(
-                    position,
-                    Vec(-25, 17, -25),
-                    Vec(25, 20, 25))),
-            box(
-                Vec(
-                    fmodf(
-                        fabsf(position.x),
-                        8),
-                    position.y,
-                    position.z),
-                Vec(1.5, 18.5, -25),
-                Vec(6.5, 20, 25)));
+
+        float mainRoom = box(position, Vec(-30, -.5, -30), Vec(30, 18, 30));
+        float ceilingCutout = box(position, Vec(-25, 17, -25), Vec(25, 20, 25));
+        float roomInterior = -min(mainRoom, ceilingCutout);
+
+        Vec columnPos = Vec(fmodf(fabsf(position.x), 8), position.y, position.z);
+        float columns = box(columnPos, Vec(1.5, 18.5, -25), Vec(6.5, 20, 25));
+
+        float room = min(roomInterior, columns);
 
         if (room < distance)
             distance = room, materialType = 2;
@@ -233,15 +244,10 @@ public:
                 float g = normal.z < 0 ? -1 : 1;
                 float u = -1 / (g + normal.z);
                 float v = normal.x * normal.y * u;
-                direction = Vec(v,
-                                g + normal.y * normal.y * u,
-                                -normal.y) *
-                                (cosf(p) * s) +
-                            Vec(1 + g * normal.x * normal.x * u,
-                                g * v,
-                                -g * normal.x) *
-                                (sinf(p) * s) +
-                            normal * sqrtf(c);
+
+                Vec tangent1 = Vec(v, g + normal.y * normal.y * u, -normal.y);
+                Vec tangent2 = Vec(1 + g * normal.x * normal.x * u, g * v, -g * normal.x);
+                direction = tangent1 * (cosf(p) * s) + tangent2 * (sinf(p) * s) + normal * sqrtf(c);
                 origin = sampledPosition + direction * .1;
                 attenuation = attenuation * 0.2;
                 if (incidence > 0 && march(sampledPosition + normal * .1,
