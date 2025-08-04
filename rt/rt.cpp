@@ -1,10 +1,16 @@
 #include <vector>
 #include <math.h>
+#include <immintrin.h>
 
-#define HIT_NONE 0
-#define HIT_LETTER 1
-#define HIT_WALL 2
-#define HIT_SUN 3
+enum HIT
+{
+    HIT_NONE,
+    HIT_LETTER,
+    HIT_WALL,
+    HIT_SUN
+};
+
+enum HIT trash;
 
 struct Vec
 {
@@ -16,21 +22,22 @@ struct Vec
         y = b;
         z = c;
     }
-    Vec operator+(Vec rhs)
+    Vec operator+(const Vec &rhs)
     {
         return Vec(x + rhs.x, y + rhs.y, z + rhs.z);
     }
-    Vec operator*(Vec rhs)
+    Vec operator*(const Vec &rhs)
     {
         return Vec(x * rhs.x, y * rhs.y, z * rhs.z);
     }
-    float operator%(Vec rhs)
+    float operator%(const Vec &rhs)
     {
         return x * rhs.x + y * rhs.y + z * rhs.z;
     }
     Vec operator!()
     {
-        return *this * (1 / sqrtf(*this % *this));
+        float invLen = _mm_cvtss_f32(_mm_rsqrt_ss(_mm_set_ss(*this % *this)));
+        return *this * invLen;
     }
 };
 
@@ -130,7 +137,7 @@ public:
             min(left.z, right.z));
     }
 
-    float SDF(Vec position, int &materialType)
+    float SDF(Vec position, enum HIT &materialType)
     {
         float distance = 1e9;
         Vec flatPos = position;
@@ -160,7 +167,7 @@ public:
         }
 
         distance = powf(powf(distance, 8) + powf(position.z, 8), .125) - .5;
-        materialType = 1;
+        materialType = HIT_LETTER;
 
         float mainRoom = box(position, Vec(-30, -.5, -30), Vec(30, 18, 30));
         float ceilingCutout = box(position, Vec(-25, 17, -25), Vec(25, 20, 25));
@@ -172,27 +179,27 @@ public:
         float room = min(roomInterior, columns);
 
         if (room < distance)
-            distance = room, materialType = 2;
+            distance = room, materialType = HIT_WALL;
 
         float ceiling = 19.9 - position.y;
 
         if (ceiling < distance)
-            distance = ceiling, materialType = 3;
+            distance = ceiling, materialType = HIT_SUN;
         return distance;
     }
 
     int march(Vec origin, Vec direction, Vec &hitPos, Vec &normal)
     {
-        int materialType = HIT_NONE;
+        enum HIT materialType = HIT_NONE;
         int steps = 0;
         float d;
 
         for (float total_d = 0; total_d < 100; total_d += d)
             if ((d = SDF(hitPos = origin + direction * total_d, materialType)) < .01 || ++steps > 99)
                 return normal =
-                           !Vec(SDF(hitPos + Vec(.01, 0), steps) - d,
-                                SDF(hitPos + Vec(0, .01), steps) - d,
-                                SDF(hitPos + Vec(0, 0, .01), steps) - d),
+                           !Vec(SDF(hitPos + Vec(.01, 0), trash) - d,
+                                SDF(hitPos + Vec(0, .01), trash) - d,
+                                SDF(hitPos + Vec(0, 0, .01), trash) - d),
                        materialType;
         return 0;
     }
