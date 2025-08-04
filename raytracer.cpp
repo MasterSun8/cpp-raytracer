@@ -91,7 +91,7 @@ void readDetails(std::vector<int> &details, FILE *file)
 int main(int argc, char *argv[])
 {
     srand(time(nullptr));
-    
+
     std::vector<Vec> curves = {};
     std::vector<Vec> camera = {};
     std::vector<char> letters = {};
@@ -128,8 +128,8 @@ int main(int argc, char *argv[])
     PathTracer pathTracer(letters, curves, imageWidth, imageHeight, numSamples, bounces, 1000, 10);
 
     pathTracer.setLightDirection(camera[0]);
-    pathTracer.cam.setPosition(camera[1]);
-    pathTracer.cam.setDirection(camera[2]);
+    pathTracer.scene.cam.setPosition(camera[1]);
+    pathTracer.scene.cam.setDirection(camera[2]);
 
     printf("Light direction: (%f, %f, %f)\n", camera[0].x, camera[0].y, camera[0].z);
     printf("Camera position: (%f, %f, %f)\n", camera[1].x, camera[1].y, camera[1].z);
@@ -205,12 +205,12 @@ int main(int argc, char *argv[])
             float completion = (float)p / (imageWidth * imageHeight),
                 elapsed = (double)(end - start) / CLOCKS_PER_SEC,
                 estimate = elapsed / completion,
-                minutes = estimate / 60,
+                minutes = estimate - 30 / 60,
                 left = estimate - elapsed;
             int est = (int)left % 60, minest = (int)estimate % 60;
             printf("\033[2A\rFinished %d pixels out of %d (%f%%)\r\n", p, imageWidth * imageHeight, completion * 100);
             printf("Render time: %.2f seconds. Expected finish time: %.0f minutes %d seconds   \r\n", elapsed, minutes, minest);
-            printf("Estimated time left: %.0f minutes and %d seconds.     ", (left-30) / 60, est);
+            printf("Estimated time left: %.0f minutes and %d seconds.     ", (left - 30) / 60, est);
             fflush(stdout);
             Sleep(300);
         }

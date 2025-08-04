@@ -1,6 +1,5 @@
 #include <vector>
 #include <math.h>
-#include <immintrin.h>
 
 enum HIT
 {
@@ -36,8 +35,69 @@ struct Vec
     }
     Vec operator!()
     {
-        float invLen = _mm_cvtss_f32(_mm_rsqrt_ss(_mm_set_ss(*this % *this)));
-        return *this * invLen;
+        return *this * (1 / sqrtf(*this % *this));
+    }
+};
+
+struct Camera
+{
+    Vec position, direction, left, up;
+    int imageWidth;
+    Camera() {};
+    Camera(Vec pos, Vec dir, int width) : position(pos), direction(dir), imageWidth(width) {};
+
+    void calculateCam()
+    {
+        direction = !(direction + position * -1);
+        left = !Vec(direction.z, 0, -direction.x) * (2. / imageWidth);
+        float x = direction.y * left.z - direction.z * left.y,
+              y = direction.z * left.x - direction.x * left.z,
+              z = direction.x * left.y - direction.y * left.x;
+
+        up = Vec(x, y, z);
+    }
+
+    void setPosition(Vec p)
+    {
+        position = p;
+        calculateCam();
+    }
+
+    void setDirection(Vec d)
+    {
+        direction = d;
+        calculateCam();
+    }
+};
+
+struct SceneGeometry
+{
+    std::vector<char> letters = {};
+    std::vector<Vec> curves = {};
+
+    Vec lightDirection;
+    Vec roomMin,
+        roomMax,
+        ceilingMin,
+        ceilingMax,
+        columnMin,
+        columnMax;
+
+    Camera cam;
+    SceneGeometry() {}
+
+    SceneGeometry(std::vector<char> l, std::vector<Vec> cur, Camera c, Vec rMin, Vec rMax, Vec cMin, Vec cMax, Vec colMin, Vec colMax)
+    {
+        lightDirection = !Vec{.6, .6, 1};
+        letters = l;
+        curves = cur;
+        cam = c;
+        roomMin = rMin;
+        roomMax = rMax;
+        ceilingMin = cMin;
+        ceilingMax = cMax;
+        columnMin = colMin;
+        columnMax = colMax;
     }
 };
 
@@ -46,74 +106,32 @@ class PathTracer
 private:
     int colour_high, colour_low;
 
-    std::vector<char> letters = {};
-    std::vector<Vec> curves = {};
-
-    Vec lightDirection{!Vec{.6, .6, 1}};
-    Vec roomMin,
-        roomMax,
-        ceilingMin,
-        ceilingMax,
-        columnMin,
-        columnMax;
-
     int imageWidth, imageHeight, numSamples, bounces;
 
 public:
-    struct Camera
+    SceneGeometry scene;
+    PathTracer(std::vector<char> l, std::vector<Vec> c, int width = 480, int height = 270, int samples = 8, int bounces = 3, int high = 1000, int low = 10) : imageWidth(width), imageHeight(height), numSamples(samples), bounces(bounces), colour_high(high), colour_low(low)
     {
-        Vec position, direction, left, up;
-        int imageWidth;
-        Camera() {};
-        Camera(Vec pos, Vec dir, int width) : position(pos), direction(dir), imageWidth(width) {};
-
-        void calculateCam()
-        {
-            direction = !(direction + position * -1);
-            left = !Vec(direction.z, 0, -direction.x) * (2. / imageWidth);
-            float x = direction.y * left.z - direction.z * left.y,
-                  y = direction.z * left.x - direction.x * left.z,
-                  z = direction.x * left.y - direction.y * left.x;
-
-            up = Vec(x, y, z);
-        }
-
-        void setPosition(Vec p)
-        {
-            position = p;
-            calculateCam();
-        }
-
-        void setDirection(Vec d)
-        {
-            direction = d;
-            calculateCam();
-        }
-    };
+        scene = SceneGeometry(l,                                              //  letters
+                              c,                                              //  curves
+                              Camera(Vec{-22, 10, 25}, Vec{-3, 4, 0}, width), //  cam
+                              Vec(-30, -.5, -30),                             //  roomMin
+                              Vec(30, 18, 30),                                //  roomMax
+                              Vec(-25, 17, -25),                              //  ceilingMin
+                              Vec(25, 20, 25),                                //  ceilingMax
+                              Vec(1.5, 18.5, -25),                            //  columnMin
+                              Vec(6.5, 20, 25)                                //  columnMax
+        );
+    }
 
     void setLightDirection(Vec ld)
     {
-        lightDirection = !ld;
+        scene.lightDirection = !ld;
     }
 
     Vec getLightDirection()
     {
-        return lightDirection;
-    }
-
-    Camera cam;
-
-    PathTracer(std::vector<char> l, std::vector<Vec> c, int width = 480, int height = 270, int samples = 8, int bounces = 3, int high = 1000, int low = 10) : imageWidth(width), imageHeight(height), numSamples(samples), bounces(bounces), colour_high(high), colour_low(low)
-    {
-        letters = l;
-        curves = c;
-        cam = Camera(Vec{-22, 10, 25}, Vec{-3, 4, 0}, width);
-        Vec roomMin(-30, -.5, -30);
-        Vec roomMax(30, 18, 30);
-        Vec ceilingMin(-25, 17, -25);
-        Vec ceilingMax(25, 20, 25);
-        Vec columnMin(1.5, 18.5, -25);
-        Vec columnMax(6.5, 20, 25);
+        return scene.lightDirection;
     }
 
     float min(float l, float r)
@@ -143,10 +161,10 @@ public:
         Vec flatPos = position;
         flatPos.z = 0;
 
-        for (int id = 0; id < letters.size(); id += 4)
+        for (int id = 0; id < scene.letters.size(); id += 4)
         {
-            Vec curveStart = Vec(letters[id] - 79, letters[id + 1] - 79) * .5;
-            Vec curveDir = Vec(letters[id + 2] - 79, letters[id + 3] - 79) * .5 + curveStart * -1;
+            Vec curveStart = Vec(scene.letters[id] - 79, scene.letters[id + 1] - 79) * .5;
+            Vec curveDir = Vec(scene.letters[id + 2] - 79, scene.letters[id + 3] - 79) * .5 + curveStart * -1;
             Vec toFlat = curveStart + flatPos * -1;
             float t = toFlat % curveDir / (curveDir % curveDir);
             t = min(-min(t, 0), 1);
@@ -157,7 +175,7 @@ public:
 
         distance = sqrtf(distance);
 
-        for (Vec &curve : curves)
+        for (Vec &curve : scene.curves)
         {
             Vec offset = flatPos + curve * -1;
             distance = min(distance,
@@ -169,12 +187,12 @@ public:
         distance = powf(powf(distance, 8) + powf(position.z, 8), .125) - .5;
         materialType = HIT_LETTER;
 
-        float mainRoom = box(position, Vec(-30, -.5, -30), Vec(30, 18, 30));
-        float ceilingCutout = box(position, Vec(-25, 17, -25), Vec(25, 20, 25));
+        float mainRoom = box(position, scene.roomMin, scene.roomMax);
+        float ceilingCutout = box(position, scene.ceilingMin, scene.ceilingMax);
         float roomInterior = -min(mainRoom, ceilingCutout);
 
         Vec columnPos = Vec(fmodf(fabsf(position.x), 8), position.y, position.z);
-        float columns = box(columnPos, Vec(1.5, 18.5, -25), Vec(6.5, 20, 25));
+        float columns = box(columnPos, scene.columnMin, scene.columnMax);
 
         float room = min(roomInterior, columns);
 
@@ -188,7 +206,7 @@ public:
         return distance;
     }
 
-    int march(Vec origin, Vec direction, Vec &hitPos, Vec &normal)
+    enum HIT march(Vec origin, Vec direction, Vec &hitPos, Vec &normal)
     {
         enum HIT materialType = HIT_NONE;
         int steps = 0;
@@ -201,7 +219,7 @@ public:
                                 SDF(hitPos + Vec(0, .01), trash) - d,
                                 SDF(hitPos + Vec(0, 0, .01), trash) - d),
                        materialType;
-        return 0;
+        return HIT_NONE;
     }
 
     Vec trace(Vec origin, Vec direction)
@@ -210,7 +228,7 @@ public:
 
         for (int bounceCount = bounces; bounceCount--;)
         {
-            int hitType = march(origin, direction, sampledPosition, normal);
+            enum HIT hitType = march(origin, direction, sampledPosition, normal);
             if (hitType == HIT_NONE)
                 break;
             if (hitType == HIT_LETTER)
@@ -244,7 +262,7 @@ public:
 
                 // Vec wallColor = Vec(400, 400, 400);
 
-                float incidence = normal % lightDirection;
+                float incidence = normal % scene.lightDirection;
                 float p = 6.283185 * random();
                 float c = random();
                 float s = sqrtf(1 - c);
@@ -258,7 +276,7 @@ public:
                 origin = sampledPosition + direction * .1;
                 attenuation = attenuation * 0.2;
                 if (incidence > 0 && march(sampledPosition + normal * .1,
-                                           lightDirection,
+                                           scene.lightDirection,
                                            sampledPosition,
                                            normal) == HIT_SUN)
                     color = color + attenuation * wallColor * incidence;
@@ -276,7 +294,7 @@ public:
     {
         Vec pixelColor;
         for (int sampleIdx = numSamples; sampleIdx--;)
-            pixelColor = pixelColor + trace(cam.position, !(cam.direction + cam.left * (pixelX - imageWidth / 2 + random()) + cam.up * (pixelY - imageHeight / 2 + random())));
+            pixelColor = pixelColor + trace(scene.cam.position, !(scene.cam.direction + scene.cam.left * (pixelX - imageWidth / 2 + random()) + scene.cam.up * (pixelY - imageHeight / 2 + random())));
         return pixelColor;
     }
 };
