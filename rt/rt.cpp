@@ -1,5 +1,7 @@
 #include <vector>
 #include <math.h>
+#include <omp.h>
+#include <thread>
 
 enum HIT
 {
@@ -29,6 +31,10 @@ struct Vec
     {
         return Vec(x * rhs.x, y * rhs.y, z * rhs.z);
     }
+    Vec operator*(const float &val)
+    {
+        return Vec(x * val, y * val, z * val);
+    }
     float operator%(const Vec &rhs)
     {
         return x * rhs.x + y * rhs.y + z * rhs.z;
@@ -37,6 +43,23 @@ struct Vec
     {
         return *this * (1 / sqrtf(*this % *this));
     }
+};
+
+struct Material
+{
+    Vec colour;
+
+    bool emissive;
+
+    float roughness,
+        reflectiveness,
+        attenuation;
+
+    Material()
+        : colour(1), emissive(false), roughness(1), reflectiveness(0), attenuation(1) {}
+
+    Material(Vec col, bool em, float r, float ref, float a)
+        : colour(col), emissive(em), roughness(r), reflectiveness(ref), attenuation(a) {};
 };
 
 struct Camera
@@ -101,6 +124,34 @@ struct SceneGeometry
     }
 };
 
+thread_local int pixel;
+
+struct HaltonState
+{
+    int baseIndex;
+
+    HaltonState(int index) : baseIndex(index) {}
+
+    float halton(int index, int base)
+    {
+        float result = 0;
+        float f = 1;
+        while (index > 0)
+        {
+            f /= base;
+            result += f * (index % base);
+            index /= base;
+        }
+        return result;
+    }
+
+    float dim(int d)
+    {
+        static const int primes[] = {2, 3, 5, 7, 11, 13, 17, 19, 23, 29};
+        return halton(baseIndex, primes[d]);
+    }
+};
+
 class PathTracer
 {
 private:
@@ -108,10 +159,24 @@ private:
 
     int imageWidth, imageHeight, numSamples, bounces;
 
+    float cos_table[4096], sin_table[4096];
+
+    HaltonState halton = HaltonState(0);
+
 public:
+    Material wall;
+    Material letter;
+
     SceneGeometry scene;
     PathTracer(std::vector<char> l, std::vector<Vec> c, int width = 480, int height = 270, int samples = 8, int bounces = 3, int high = 1000, int low = 10) : imageWidth(width), imageHeight(height), numSamples(samples), bounces(bounces), colour_high(high), colour_low(low)
     {
+        for (int i = 0; i < 4096; i++)
+        {
+            float angle = (i / 4096.0f) * 2 * M_PI;
+            cos_table[i] = cosf(angle);
+            sin_table[i] = sinf(angle);
+        }
+
         scene = SceneGeometry(l,                                              //  letters
                               c,                                              //  curves
                               Camera(Vec{-22, 10, 25}, Vec{-3, 4, 0}, width), //  cam
@@ -139,10 +204,10 @@ public:
         return l < r ? l : r;
     }
 
-    float random()
-    {
-        return (float)rand() / RAND_MAX;
-    }
+    // float random()
+    // {
+    //     return (float)rand() / RAND_MAX;
+    // }
 
     float box(Vec position, Vec left, Vec right)
     {
@@ -233,38 +298,34 @@ public:
                 break;
             if (hitType == HIT_LETTER)
             {
+
                 color = color * .8;
                 direction = direction + normal * (normal % direction * -2);
                 origin = sampledPosition + direction * 0.1;
-                attenuation = attenuation * 0.1;
+                attenuation = attenuation * 0.5;
             }
             if (hitType == HIT_WALL)
             {
 
-                Vec color1 = Vec(colour_high, colour_low, colour_low); // X-facing walls - red
-                Vec color2 = Vec(colour_low, colour_high, colour_low); // Y-facing walls - green
-                Vec color3 = Vec(colour_low, colour_low, colour_high); // Z-facing walls - blue
+                Vec color1 = Vec(colour_high, colour_low, colour_low);
+                Vec color2 = Vec(colour_low, colour_high, colour_low);
+                Vec color3 = Vec(colour_low, colour_low, colour_high);
 
-                // Use absolute normal components as weights
                 float xWeight = fabsf(normal.x);
                 float yWeight = fabsf(normal.y);
                 float zWeight = fabsf(normal.z);
 
-                // Normalize weights so they sum to 1
                 float totalWeight = xWeight + yWeight + zWeight;
                 xWeight /= totalWeight;
                 yWeight /= totalWeight;
                 zWeight /= totalWeight;
 
-                // Blend colors based on normal direction
                 Vec wallColor = color1 * xWeight + color2 * yWeight + color3 * zWeight;
-                /**/
-
-                // Vec wallColor = Vec(400, 400, 400);
 
                 float incidence = normal % scene.lightDirection;
-                float p = 6.283185 * random();
-                float c = random();
+                float p = 6.283185 * halton.dim(3);
+                int idx = (int)(p * 651.8986f) & 4095;
+                float c = halton.dim(4);
                 float s = sqrtf(1 - c);
                 float g = normal.z < 0 ? -1 : 1;
                 float u = -1 / (g + normal.z);
@@ -272,9 +333,9 @@ public:
 
                 Vec tangent1 = Vec(v, g + normal.y * normal.y * u, -normal.y);
                 Vec tangent2 = Vec(1 + g * normal.x * normal.x * u, g * v, -g * normal.x);
-                direction = tangent1 * (cosf(p) * s) + tangent2 * (sinf(p) * s) + normal * sqrtf(c);
+                direction = tangent1 * (cos_table[idx] * s) + tangent2 * (sin_table[idx] * s) + normal * sqrtf(c);
                 origin = sampledPosition + direction * .1;
-                attenuation = attenuation * 0.2;
+                attenuation = attenuation * .05;
                 if (incidence > 0 && march(sampledPosition + normal * .1,
                                            scene.lightDirection,
                                            sampledPosition,
@@ -293,8 +354,17 @@ public:
     Vec pathPixel(int pixelX, int pixelY)
     {
         Vec pixelColor;
-        for (int sampleIdx = numSamples; sampleIdx--;)
-            pixelColor = pixelColor + trace(scene.cam.position, !(scene.cam.direction + scene.cam.left * (pixelX - imageWidth / 2 + random()) + scene.cam.up * (pixelY - imageHeight / 2 + random())));
+        int sequenceIndex = pixel * (numSamples + bounces * 2) + numSamples;
+        halton = HaltonState(sequenceIndex);
+        for (int sampleIdx = 0; sampleIdx < numSamples; sampleIdx++)
+        {
+            halton.baseIndex++;
+            pixelColor = pixelColor + trace(
+                                          scene.cam.position,
+                                          !(scene.cam.direction +
+                                            scene.cam.left * (pixelX - imageWidth / 2 + halton.dim(1)) +
+                                            scene.cam.up * (pixelY - imageHeight / 2 + halton.dim(2))));
+        }
         return pixelColor;
     }
 };

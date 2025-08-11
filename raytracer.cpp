@@ -9,7 +9,6 @@
 #include <thread>
 #include <random>
 #include <algorithm>
-#include <atomic>
 #include "display/display.cpp"
 #include "rt/rt.cpp"
 
@@ -157,7 +156,7 @@ int main(int argc, char *argv[])
     auto rng = std::default_random_engine();
     std::shuffle(order.begin(), order.end(), rng);
 
-    std::atomic<int> pix{0};
+    int pix = 0;
 
     printf("Rendering %s with %d samples and %d bounces...\n", imageFileName.c_str(), numSamples, bounces);
     printf("Image size: %dx%d\n", imageWidth, imageHeight);
@@ -168,14 +167,15 @@ int main(int argc, char *argv[])
     clock_t end = clock();
 
     bool done = false;
-
+    std::vector<int> thread_counters(omp_get_max_threads(), 0);
     std::thread raytracingThread([&]()
                                  {
 #pragma omp parallel for schedule(dynamic, 64)
-        for (unsigned int pixel : order)
+        for (unsigned int pixe : order)
         {
-                int pixelX = pixel % imageWidth;
-                int pixelY = pixel / imageWidth;
+                pixel = pixe;
+                int pixelX = pixe % imageWidth;
+                int pixelY = pixe / imageWidth;
                 Vec pixelColor;
 
                 pixelColor = pathTracer.pathPixel(pixelX, pixelY);
@@ -190,7 +190,7 @@ int main(int argc, char *argv[])
                 image[id + 0] = (unsigned char)pixelColor.x;
                 image[id + 1] = (unsigned char)pixelColor.y;
                 image[id + 2] = (unsigned char)pixelColor.z;
-                pix++;
+                thread_counters[omp_get_thread_num()]++;
         }
         done = true; });
 
@@ -200,32 +200,34 @@ int main(int argc, char *argv[])
                                {
     Sleep(1000);
     while (!done){
+            pix = 0;
+            for(int c : thread_counters) pix += c;
             end = clock();
-            int p = pix.load();
-            float completion = (float)p / (imageWidth * imageHeight),
+            float completion = (float)pix / (imageWidth * imageHeight),
                 elapsed = (double)(end - start) / CLOCKS_PER_SEC,
                 estimate = elapsed / completion,
-                minutes = estimate - 30 / 60,
+                minutes = (estimate - 30) / 60,
                 left = estimate - elapsed;
             int est = (int)left % 60, minest = (int)estimate % 60;
-            printf("\033[2A\rFinished %d pixels out of %d (%f%%)\r\n", p, imageWidth * imageHeight, completion * 100);
-            printf("Render time: %.2f seconds. Expected finish time: %.0f minutes %d seconds   \r\n", elapsed, minutes, minest);
+            printf("\033[2A\rFinished %d pixels out of %d (%f%%)\r\n", pix, imageWidth * imageHeight, completion * 100);
+            printf("Render time: %.2f seconds. Expected finish time: %.0f minutes %d seconds(%.0fs))   \r\n", elapsed, minutes, minest, estimate);
             printf("Estimated time left: %.0f minutes and %d seconds.     ", (left - 30) / 60, est);
             fflush(stdout);
             Sleep(300);
         }
         Sleep(5000);
+        pix = 0;
+        for(int c : thread_counters) pix += c;
         end = clock();
-        int p = pix.load();
-        float completion = (float)p / (imageWidth * imageHeight),
+        float completion = (float)pix / (imageWidth * imageHeight),
             elapsed = (double)(end - start) / CLOCKS_PER_SEC,
             estimate = elapsed / completion,
-            minutes = estimate / 60,
+            minutes = (estimate - 30) / 60,
             left = estimate - elapsed;
         int est = (int)left % 60, minest = (int)estimate % 60;
-        printf("\033[2A\rFinished %d pixels out of %d (%f%%)\r\n", p, imageWidth * imageHeight, completion * 100);
-        printf("Render time: %.2f seconds. Expected finish time: %.0f minutes %d seconds   \r\n", elapsed, minutes, minest);
-        printf("Estimated time left: %.0f minutes and %d seconds.     ", (left) / 60, est);
+        printf("\033[2A\rFinished %d pixels out of %d (%f%%)\r\n", pix, imageWidth * imageHeight, completion * 100);
+        printf("Render time: %.2f seconds. Expected finish time: %.0f minutes %d seconds(%.0fs))   \r\n", elapsed, minutes, minest, estimate);
+        printf("Estimated time left: %.0f minutes and %d seconds.     ", (left - 30) / 60, est);
         printf("\nRendering of %s complete.\n", imageFileName.c_str());
         fwrite(image.data(), 1, imageWidth * imageHeight * 3, outFile);
         printf("Render time: %.2f seconds\n", (double)(end - start) / CLOCKS_PER_SEC);
