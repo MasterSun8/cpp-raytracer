@@ -2,6 +2,9 @@
 #include <math.h>
 #include <omp.h>
 #include <thread>
+#include "SceneGeometry.cpp"
+#include "Material.cpp"
+#include "HaltonState.cpp"
 
 enum HIT
 {
@@ -12,145 +15,6 @@ enum HIT
 };
 
 enum HIT trash;
-
-struct Vec
-{
-    float x, y, z;
-    Vec(float v = 0) { x = y = z = v; }
-    Vec(float a, float b, float c = 0)
-    {
-        x = a;
-        y = b;
-        z = c;
-    }
-    Vec operator+(const Vec &rhs)
-    {
-        return Vec(x + rhs.x, y + rhs.y, z + rhs.z);
-    }
-    Vec operator*(const Vec &rhs)
-    {
-        return Vec(x * rhs.x, y * rhs.y, z * rhs.z);
-    }
-    Vec operator*(const float &val)
-    {
-        return Vec(x * val, y * val, z * val);
-    }
-    float operator%(const Vec &rhs)
-    {
-        return x * rhs.x + y * rhs.y + z * rhs.z;
-    }
-    Vec operator!()
-    {
-        return *this * (1 / sqrtf(*this % *this));
-    }
-};
-
-struct Material
-{
-    Vec colour;
-
-    bool emissive;
-
-    float roughness,
-        reflectiveness,
-        attenuation;
-
-    Material()
-        : colour(1), emissive(false), roughness(1), reflectiveness(0), attenuation(1) {}
-
-    Material(Vec col, bool em, float r, float ref, float a)
-        : colour(col), emissive(em), roughness(r), reflectiveness(ref), attenuation(a) {};
-};
-
-struct Camera
-{
-    Vec position, direction, left, up;
-    int imageWidth;
-    Camera() {};
-    Camera(Vec pos, Vec dir, int width) : position(pos), direction(dir), imageWidth(width) {};
-
-    void calculateCam()
-    {
-        direction = !(direction + position * -1);
-        left = !Vec(direction.z, 0, -direction.x) * (2. / imageWidth);
-        float x = direction.y * left.z - direction.z * left.y,
-              y = direction.z * left.x - direction.x * left.z,
-              z = direction.x * left.y - direction.y * left.x;
-
-        up = Vec(x, y, z);
-    }
-
-    void setPosition(Vec p)
-    {
-        position = p;
-        calculateCam();
-    }
-
-    void setDirection(Vec d)
-    {
-        direction = d;
-        calculateCam();
-    }
-};
-
-struct SceneGeometry
-{
-    std::vector<char> letters = {};
-    std::vector<Vec> curves = {};
-
-    Vec lightDirection;
-    Vec roomMin,
-        roomMax,
-        ceilingMin,
-        ceilingMax,
-        columnMin,
-        columnMax;
-
-    Camera cam;
-    SceneGeometry() {}
-
-    SceneGeometry(std::vector<char> l, std::vector<Vec> cur, Camera c, Vec rMin, Vec rMax, Vec cMin, Vec cMax, Vec colMin, Vec colMax)
-    {
-        lightDirection = !Vec{.6, .6, 1};
-        letters = l;
-        curves = cur;
-        cam = c;
-        roomMin = rMin;
-        roomMax = rMax;
-        ceilingMin = cMin;
-        ceilingMax = cMax;
-        columnMin = colMin;
-        columnMax = colMax;
-    }
-};
-
-thread_local int pixel;
-
-struct HaltonState
-{
-    int baseIndex;
-
-    HaltonState(int index) : baseIndex(index) {}
-
-    float halton(int index, int base)
-    {
-        float result = 0;
-        float f = 1;
-        while (index > 0)
-        {
-            f /= base;
-            result += f * (index % base);
-            index /= base;
-        }
-        return result;
-    }
-
-    float dim(int d)
-    {
-        static const int primes[] = {2, 3, 5, 7, 11, 13, 17, 19, 23, 29};
-        return halton(baseIndex, primes[d]);
-    }
-};
 
 class PathTracer
 {
@@ -168,7 +32,7 @@ public:
     Material letter;
 
     SceneGeometry scene;
-    PathTracer(std::vector<char> l, std::vector<Vec> c, int width = 480, int height = 270, int samples = 8, int bounces = 3, int high = 1000, int low = 10) : imageWidth(width), imageHeight(height), numSamples(samples), bounces(bounces), colour_high(high), colour_low(low)
+    PathTracer(std::vector<char> l, std::vector<Vec> c, int width = 480, int height = 270, int samples = 8, int bounces = 3, int high = 100, int low = 10) : imageWidth(width), imageHeight(height), numSamples(samples), bounces(bounces), colour_high(high), colour_low(low)
     {
         for (int i = 0; i < 4096; i++)
         {
@@ -179,6 +43,7 @@ public:
 
         scene = SceneGeometry(l,                                              //  letters
                               c,                                              //  curves
+                              Vec{.6, .6, 1},                                 //  lightDirection
                               Camera(Vec{-22, 10, 25}, Vec{-3, 4, 0}, width), //  cam
                               Vec(-30, -.5, -30),                             //  roomMin
                               Vec(30, 18, 30),                                //  roomMax
@@ -187,6 +52,8 @@ public:
                               Vec(1.5, 18.5, -25),                            //  columnMin
                               Vec(6.5, 20, 25)                                //  columnMax
         );
+        wall = Material(Vec(colour_high, colour_low, colour_low), false, 1, 0.5, 1);
+        letter = Material(Vec(1, 1, 1), false, 1, 0.8, 1);
     }
 
     void setLightDirection(Vec ld)
@@ -203,11 +70,6 @@ public:
     {
         return l < r ? l : r;
     }
-
-    // float random()
-    // {
-    //     return (float)rand() / RAND_MAX;
-    // }
 
     float box(Vec position, Vec left, Vec right)
     {
@@ -289,7 +151,8 @@ public:
 
     Vec trace(Vec origin, Vec direction)
     {
-        Vec sampledPosition, normal, color, attenuation = 1;
+        Vec sampledPosition, normal, color;
+        float attenuation = 1;
 
         for (int bounceCount = bounces; bounceCount--;)
         {
@@ -298,11 +161,10 @@ public:
                 break;
             if (hitType == HIT_LETTER)
             {
-
-                color = color * .8;
+                color = color * 1;
                 direction = direction + normal * (normal % direction * -2);
                 origin = sampledPosition + direction * 0.1;
-                attenuation = attenuation * 0.5;
+                attenuation = attenuation * 1;
             }
             if (hitType == HIT_WALL)
             {
@@ -335,17 +197,17 @@ public:
                 Vec tangent2 = Vec(1 + g * normal.x * normal.x * u, g * v, -g * normal.x);
                 direction = tangent1 * (cos_table[idx] * s) + tangent2 * (sin_table[idx] * s) + normal * sqrtf(c);
                 origin = sampledPosition + direction * .1;
-                attenuation = attenuation * .05;
+                attenuation = attenuation * .2;
                 if (incidence > 0 && march(sampledPosition + normal * .1,
                                            scene.lightDirection,
                                            sampledPosition,
                                            normal) == HIT_SUN)
-                    color = color + attenuation * wallColor * incidence;
+                    color = color + wallColor * attenuation * incidence;
             }
             if (hitType == HIT_SUN)
-            { //
-                color = color + attenuation * Vec(70, 70, 100);
-                break; // Sun Color
+            {
+                color = color + Vec(70, 70, 100) * attenuation;
+                break;
             }
         }
         return color;
@@ -354,7 +216,7 @@ public:
     Vec pathPixel(int pixelX, int pixelY)
     {
         Vec pixelColor;
-        int sequenceIndex = pixel * (numSamples + bounces * 2) + numSamples;
+        int sequenceIndex = (pixelY * imageHeight + pixelX) * (numSamples + bounces * 2) + numSamples;
         halton = HaltonState(sequenceIndex);
         for (int sampleIdx = 0; sampleIdx < numSamples; sampleIdx++)
         {

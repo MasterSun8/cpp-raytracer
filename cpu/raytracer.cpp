@@ -168,6 +168,7 @@ int main(int argc, char *argv[])
 
     bool done = false;
     std::vector<int> thread_counters(omp_get_max_threads(), 0);
+    int pixel = 0;
     std::thread raytracingThread([&]()
                                  {
 #pragma omp parallel for schedule(dynamic, 64)
